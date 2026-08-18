@@ -5,9 +5,44 @@ import cv2
 import torch
 from torchvision import transforms
 from PIL import Image
+import pyautogui
 
 import config
 from model import build_resnet_gesture_classifier
+
+
+def execute_gesture_action(gesture: str, last_action_time: float, cooldown: float = 1.0) -> float:
+    """Executes system actions based on predicted gestures with a debounce cooldown."""
+    current_time = time.time()
+    if current_time - last_action_time < cooldown:
+        return last_action_time
+
+    if gesture == "open_palm":
+        pyautogui.press("playpause")
+        print("[ACTION] Toggled Play/Pause")
+        return current_time
+
+    elif gesture == "thumbs_up":
+        pyautogui.press("volumeup")
+        print("[ACTION] Volume Up (+)")
+        return current_time - (cooldown - 0.2)
+
+    elif gesture == "thumbs_down":
+        pyautogui.press("volumedown")
+        print("[ACTION] Volume Down (-)")
+        return current_time - (cooldown - 0.2)
+
+    elif gesture == "peace":
+        pyautogui.press("nexttrack")
+        print("[ACTION] Next Track (>>)")
+        return current_time
+
+    elif gesture == "fist":
+        pyautogui.press("volumemute")
+        print("[ACTION] Mute Audio")
+        return current_time
+
+    return last_action_time
 
 
 def run_live_pipeline():
@@ -21,6 +56,7 @@ def run_live_pipeline():
     model.to(config.DEVICE)
     model.eval()
 
+    # Preprocessing Transforms
     transform = transforms.Compose([
         transforms.Resize(config.IMAGE_SIZE),
         transforms.ToTensor(),
@@ -30,8 +66,9 @@ def run_live_pipeline():
     cap = cv2.VideoCapture(0)
     prediction_buffer = deque(maxlen=7)
     prev_frame_time = time.time()
+    last_action_time = 0.0
 
-    print("\n[INFO] Starting Live Recognition. Press 'Q' or 'ESC' to exit.\n")
+    print("\n[INFO] Starting Live Controller. Press 'Q' or 'ESC' to exit.\n")
 
     try:
         while cap.isOpened():
@@ -42,7 +79,6 @@ def run_live_pipeline():
             frame = cv2.flip(frame, 1)
             h, w, _ = frame.shape
 
-            # Center target box
             box_size = 250
             top = (h - box_size) // 2
             bottom = top + box_size
@@ -61,12 +97,15 @@ def run_live_pipeline():
 
             current_gesture = Counter(prediction_buffer).most_common(1)[0][0]
 
-            # Calculate FPS
+            # Execute action if hand gesture detected
+            if current_gesture != "no_gesture":
+                last_action_time = execute_gesture_action(current_gesture, last_action_time)
+
             curr_time = time.time()
             fps = 1.0 / (curr_time - prev_frame_time + 1e-6)
             prev_frame_time = curr_time
 
-            # HUD Display
+            # Render UI Overlays
             cv2.rectangle(frame, (left, top), (right, bottom), (0, 235, 0), 2)
             cv2.rectangle(frame, (0, 0), (w, 45), (20, 20, 20), -1)
             cv2.putText(
@@ -90,7 +129,7 @@ def run_live_pipeline():
                 cv2.LINE_AA,
             )
 
-            cv2.imshow("Real-Time Hand Gesture Recognition", frame)
+            cv2.imshow("Real-Time Hand Gesture Controller", frame)
 
             key = cv2.waitKey(1) & 0xFF
             if key in (ord("q"), 27):
