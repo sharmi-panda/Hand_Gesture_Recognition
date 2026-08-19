@@ -1,123 +1,86 @@
-# src/collect_data.py
 import argparse
-import sys
 import time
-from pathlib import Path
 import cv2
-
 import config
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Zero-Dependency Hand Gesture Collector")
-    parser.add_argument(
-        "--gesture",
-        "-g",
-        type=str,
-        default="thumbs_up",
-        choices=config.CLASSES,
-        help=f"Target gesture class to record. Options: {config.CLASSES}",
-    )
-    parser.add_argument(
-        "--samples",
-        "-s",
-        type=int,
-        default=300,
-        help="Number of images to capture.",
-    )
-    return parser.parse_args()
-
-
-def collect_samples():
-    args = parse_args()
-    save_folder = config.RAW_DATA_DIR / args.gesture
-    save_folder.mkdir(parents=True, exist_ok=True)
-
-    existing_images = list(save_folder.glob("*.jpg"))
-    saved_count = len(existing_images)
-    target_count = saved_count + args.samples
-
-    print("=" * 55)
-    print(f" DATA COLLECTOR (Pure OpenCV) -> Class: '{args.gesture}'")
-    print(f" Existing Samples: {saved_count} | Target Total: {target_count}")
-    print("=" * 55)
+def collect_samples(gesture_name: str, target_samples: int = 300):
+    save_dir = config.RAW_DATA_DIR / gesture_name
+    save_dir.mkdir(parents=True, exist_ok=True)
 
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
-        print("[ERROR] Camera feed unavailable.")
-        sys.exit(1)
+        print("[ERROR] Cannot access webcam.")
+        return
 
-    is_recording = False
+    collected = len(list(save_dir.glob("*.jpg")))
+    recording = False
+
+    print(f"\n[INFO] Collecting for: '{gesture_name}'")
+    print("[INFO] Controls:")
+    print("  - Press SPACE to start/pause recording")
+    print("  - Press 'Q' or 'ESC' to exit early\n")
 
     try:
-        while cap.isOpened() and saved_count < target_count:
+        while True:
             ret, frame = cap.read()
             if not ret:
                 break
 
             frame = cv2.flip(frame, 1)
-            height, width, _ = frame.shape
+            h, w, _ = frame.shape
 
-            # Define a fixed 250x250 target ROI box in the center of the frame
-            box_size = 250
-            top = (height - box_size) // 2
+            box_size = 280
+            top = (h - box_size) // 2
             bottom = top + box_size
-            left = (width - box_size) // 2
+            left = (w - box_size) // 2
             right = left + box_size
 
-            # Crop ROI
-            crop = frame[top:bottom, left:right]
+            roi = frame[top:bottom, left:right]
 
-            # Draw UI target box
-            box_color = (0, 235, 0) if is_recording else (0, 0, 255)
+            if recording and collected < target_samples:
+                file_path = save_dir / f"{gesture_name}_{collected:04d}.jpg"
+                cv2.imwrite(str(file_path), roi)
+                collected += 1
+                time.sleep(0.02)
+
+            box_color = (0, 255, 0) if recording else (0, 165, 255)
             cv2.rectangle(frame, (left, top), (right, bottom), box_color, 2)
+            cv2.rectangle(frame, (0, 0), (w, 45), (25, 25, 25), -1)
 
-            # Header HUD
-            status_text = f"REC ({saved_count}/{target_count})" if is_recording else "PAUSED (Press SPACE)"
-            cv2.rectangle(frame, (0, 0), (width, 40), (20, 20, 20), -1)
+            status_str = "RECORDING" if recording else "PAUSED (Press SPACE)"
             cv2.putText(
                 frame,
-                f"Class: {args.gesture.upper()} | {status_text}",
-                (15, 27),
+                f"Class: {gesture_name} | {collected}/{target_samples} | {status_str}",
+                (15, 30),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.65,
-                box_color,
+                (255, 255, 255),
                 2,
                 cv2.LINE_AA,
             )
 
-            cv2.putText(
-                frame,
-                "Place hand inside green box  |  SPACE: Rec  |  Q: Quit",
-                (15, height - 15),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                (220, 220, 220),
-                1,
-                cv2.LINE_AA,
-            )
-
-            # Save frame when recording
-            if is_recording and crop.size > 0:
-                resized_crop = cv2.resize(crop, config.IMAGE_SIZE)
-                filename = save_folder / f"{args.gesture}_{saved_count:04d}.jpg"
-                cv2.imwrite(str(filename), resized_crop)
-                saved_count += 1
-                time.sleep(0.02)
-
-            cv2.imshow("Hand Gesture Dataset Collector", frame)
-
+            cv2.imshow("Data Collector", frame)
             key = cv2.waitKey(1) & 0xFF
-            if key == ord(" "):
-                is_recording = not is_recording
-            elif key in (ord("q"), 27):
+
+            if key == 32:  # SPACE
+                recording = not recording
+            elif key in (ord("q"), 27):  # Q or ESC
+                break
+
+            if collected >= target_samples:
+                print(f"[SUCCESS] Reached {target_samples} images for '{gesture_name}'.")
                 break
 
     finally:
         cap.release()
         cv2.destroyAllWindows()
-        print(f"\n[SUCCESS] Saved {saved_count} images in '{save_folder}'.\n")
 
 
 if __name__ == "__main__":
-    collect_samples()
+    parser = argparse.ArgumentParser(description="Collect hand gesture training images.")
+    parser.add_argument("--gesture", type=str, required=True, choices=config.CLASSES)
+    parser.add_argument("--samples", type=int, default=300)
+    args = parser.parse_args()
+
+    collect_samples(args.gesture, args.samples)
